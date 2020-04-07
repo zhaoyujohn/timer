@@ -84,9 +84,9 @@ namespace zy {
 
 				auto current = std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count();
 				while (base_ <= current) {
-					++base_;
 					int index = base_ & wheelMask;
 					auto key = base_ >> wheelBitNum;
+					++base_;
 					auto& timers = wheel_[index];
 
 					{
