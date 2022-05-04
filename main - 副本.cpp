@@ -1,62 +1,109 @@
-﻿#include <sys/eventfd.h>
-#include <unistd.h>
-#include <stdlib.h>
-#include <stdio.h>
-#include <stdint.h>
-#include <string.h>
-#include <errno.h>
+// block_io_test.cpp : 此文件包含 "main" 函数。程序执行将在此处开始并结束。
+//
+
+#include <iostream>
+#include <thread>
+#include <chrono>
+#include <string>
+#include <iostream>
 #include <fcntl.h>
+#include <unistd.h>
 
-// Implemented by Vitaly "_Vi" Shukela in 2015, License=MIT.
+using namespace std::chrono;
 
-int main(int argc, char* argv[])
+#define WINDOW_LENGTH   90
+#define CHECK_TIME  2000
+
+struct mren_block_io_time_window {
+    int first_gear_start_index;
+    int second_gear_start_index;
+    int third_gear_start_index;
+
+    int first_gear_block_io_num;
+    int second_gear_block_io_num;
+    int third_gear_block_io_num;
+
+    int cursors;
+
+    unsigned long window[WINDOW_LENGTH];
+
+    mren_block_io_time_window() : first_gear_start_index(0), second_gear_start_index(0), third_gear_start_index(0),
+        first_gear_block_io_num(0), second_gear_block_io_num(0), third_gear_block_io_num(0), cursors(-1)
+    {
+
+    }
+
+};
+
+static mren_block_io_time_window g_window;
+
+void alarm()
 {
-    if (argc != 3 || !strcmp(argv[1], "--help")) {
-        fprintf(stderr, "Usage: cgroup_memory_pressure_monitor {low|medium|critical} /sys/fs/cgroup/memory/your_cgroup\n");
-        return 1;
+
+}
+
+void CheckIO(long long time)
+{
+    // firt gear
+    for (auto i = 0; i < time / CHECK_TIME + 1; ++i) {
+
+    }
+    g_window.window[++g_window.cursors % WINDOW_LENGTH] = time;
+    if (time >= 1000) {
+        ++g_window.first_gear_block_io_num;
     }
 
-    int efd = eventfd(0, 0);
-    if (efd == -1) { perror("eventfd"); return 2; }
-
-    int mp;
-    {
-        char buf[4096];
-        snprintf(buf, sizeof(buf), "%s/memory.pressure_level", argv[2]);
-        mp = open(buf, O_RDONLY);
-        if (mp == -1) { perror("open memory.pressure_level"); return 3; }
+    if (g_window.first_gear_block_io_num >= 4) {
+        alarm();
     }
 
-    int cgc;
-    {
-        char buf[4096];
-        snprintf(buf, sizeof(buf), "%s/cgroup.event_control", argv[2]);
-        cgc = open(buf, O_WRONLY);
-        if (cgc == -1) { perror("open cgroup.event_control"); return 4; }
+    int interval = g_window.cursors < g_window.first_gear_start_index ? g_window.cursors + WINDOW_LENGTH - g_window.first_gear_start_index + 1 :
+        g_window.cursors - g_window.first_gear_start_index + 1;
+    
+    
+    if (interval >= 5) {
+        for (auto i = 0; i < interval - 5 + 1; ++i) {
+            if (g_window.window[(g_window.first_gear_start_index + i) % WINDOW_LENGTH] >= 1000) {
+                --g_window.first_gear_block_io_num;
+            }
+            g_window.first_gear_start_index = (g_window.first_gear_start_index + 1) % WINDOW_LENGTH;
+        }
     }
+}
 
-    {
-        char buf[128];
-        int l;
-        snprintf(buf, sizeof(buf), "%d %d %s%n", efd, mp, argv[1], &l);
-        int ret = write(cgc, buf, l);
-        if (ret == -1) { perror("write"); return 5; }
+void iotest()
+{
+    static unsigned long cursors = 0;
+    static int partitionNum = 40960;
+    static char buf[512] = { 0 };
+
+    auto begin = time_point_cast<milliseconds>(steady_clock::now()).time_since_epoch().count();
+    int fd = open("/home/file", O_RDWR);
+    auto ret = lseek(fd, (cursors++) % partitionNum, SEEK_SET);
+    ret = write(fd, buf, sizeof(buf));
+    ret = read(fd, buf, sizeof(buf));
+    close(fd);
+    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
+    auto end = time_point_cast<milliseconds>(steady_clock::now()).time_since_epoch().count();
+
+    CheckIO(end - begin);
+}
+
+void worker()
+{
+    auto sleepTime = std::chrono::milliseconds(CHECK_TIME);
+    while (true) {
+        auto nextTimeout = time_point_cast<milliseconds>(steady_clock::now()).time_since_epoch() + sleepTime;
+        iotest();
+        auto now = time_point_cast<milliseconds>(steady_clock::now()).time_since_epoch();
+        auto waitTime = (now >= nextTimeout) ? sleepTime - (now - nextTimeout) % sleepTime : (nextTimeout - now);
+        std::this_thread::sleep_for(waitTime);
+        std::cout << waitTime.count() << std::endl;
     }
+}
 
-    close(cgc);
-    close(mp);
-
-    for (;;) {
-        uint64_t x;
-        int ret = read(efd, &x, sizeof(x));
-
-        if (ret == 0) break;
-        if (ret == -1 && (errno == EINTR || errno == EAGAIN)) continue;
-        if (ret != sizeof(x)) { perror("read"); return 6; }
-
-        fprintf(stdout, "%lld\n", x);
-        fflush(stdout);
-    }
-
-    return 0;
+int main()
+{
+    worker();
+    std::cout << "Hello World!\n";
 }
