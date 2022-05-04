@@ -6,13 +6,24 @@
 #include <chrono>
 #include <string>
 #include <iostream>
+#include <utility>
+#include <cstdio>
+#include <cstring>
 #include <fcntl.h>
 #include <unistd.h>
 
 using namespace std::chrono;
 
-#define WINDOW_LENGTH   90
+#define WINDOW_LENGTH   10
 #define CHECK_TIME  2000
+
+struct mren_io_time {
+    unsigned long absolutleTime;
+    unsigned int ioTime;
+
+    mren_io_time() : absolutleTime(0), ioTime(0)
+    {}
+};
 
 struct mren_block_io_time_window {
     int first_gear_start_index;
@@ -25,12 +36,11 @@ struct mren_block_io_time_window {
 
     int cursors;
 
-    unsigned long window[WINDOW_LENGTH];
+    mren_io_time window[WINDOW_LENGTH];
 
     mren_block_io_time_window() : first_gear_start_index(0), second_gear_start_index(0), third_gear_start_index(0),
         first_gear_block_io_num(0), second_gear_block_io_num(0), third_gear_block_io_num(0), cursors(-1)
     {
-
     }
 
 };
@@ -42,32 +52,38 @@ void alarm()
 
 }
 
-void CheckIO(long long time)
+void CheckIO(long long start, long long end)
 {
     // firt gear
-    for (auto i = 0; i < time / CHECK_TIME + 1; ++i) {
-
-    }
-    g_window.window[++g_window.cursors % WINDOW_LENGTH] = time;
-    if (time >= 1000) {
-        ++g_window.first_gear_block_io_num;
-    }
-
-    if (g_window.first_gear_block_io_num >= 4) {
-        alarm();
-    }
-
-    int interval = g_window.cursors < g_window.first_gear_start_index ? g_window.cursors + WINDOW_LENGTH - g_window.first_gear_start_index + 1 :
-        g_window.cursors - g_window.first_gear_start_index + 1;
-    
-    
-    if (interval >= 5) {
-        for (auto i = 0; i < interval - 5 + 1; ++i) {
-            if (g_window.window[(g_window.first_gear_start_index + i) % WINDOW_LENGTH] >= 1000) {
+    auto ioTime  = end - start;
+    while (ioTime >= 0) {
+        g_window.cursors = (g_window.cursors + 1) % WINDOW_LENGTH;
+        g_window.window[g_window.cursors].absolutleTime = end - ioTime;
+        g_window.window[g_window.cursors].ioTime = ioTime / CHECK_TIME ? CHECK_TIME : ioTime;
+        
+        int distance = (WINDOW_LENGTH + g_window.first_gear_start_index - g_window.cursors - 1) % WINDOW_LENGTH;
+        if (distance == 0) {
+            if (g_window.window[g_window.first_gear_start_index].ioTime >= 1000) {
                 --g_window.first_gear_block_io_num;
             }
             g_window.first_gear_start_index = (g_window.first_gear_start_index + 1) % WINDOW_LENGTH;
         }
+
+        if (g_window.window[g_window.cursors].ioTime >= 1000) {
+            ++g_window.first_gear_block_io_num;
+        }
+        ioTime -= CHECK_TIME;
+    }
+
+    while (g_window.window[g_window.cursors].absolutleTime - g_window.window[g_window.first_gear_start_index].absolutleTime > 10000) {
+        if (g_window.window[g_window.first_gear_start_index].ioTime >= 1000) {
+            --g_window.first_gear_block_io_num;
+        }
+        g_window.first_gear_start_index = (g_window.first_gear_start_index + 1) % WINDOW_LENGTH;
+    }
+
+    if (g_window.first_gear_block_io_num >= 4) {
+        alarm();
     }
 }
 
@@ -86,7 +102,7 @@ void iotest()
     std::this_thread::sleep_for(std::chrono::milliseconds(3000));
     auto end = time_point_cast<milliseconds>(steady_clock::now()).time_since_epoch().count();
 
-    CheckIO(end - begin);
+    CheckIO(begin, end);
 }
 
 void worker()
