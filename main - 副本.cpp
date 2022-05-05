@@ -6,7 +6,10 @@
 #include <chrono>
 #include <string>
 #include <iostream>
+#include <fstream>
 #include <utility>
+#include <queue>
+#include <thread>
 #include <cstdio>
 #include <cstring>
 #include <fcntl.h>
@@ -16,6 +19,7 @@ using namespace std::chrono;
 
 #define WINDOW_LENGTH   10
 #define CHECK_TIME  2000
+#define FAULT_NUM   5
 
 struct mren_io_time {
     unsigned long absolutleTime;
@@ -25,64 +29,62 @@ struct mren_io_time {
     {}
 };
 
+struct mren_disk_statistic {
+    unsigned long rd_ios;       // 读完成次数
+    unsigned long wr_ios;      // 写完成次数
+    unsigned long rd_ticks;    // 读操作花费毫秒数
+    unsigned long wr_ticks; // 写操作花费的毫秒数
+    unsigned long tot_ticks;     // IO操作花费的毫秒数
+    unsigned long rq_ticks;      // IO操作花费的加权毫秒数
+    unsigned long in_flight;     // 正在处理的IO请求数
+
+    mren_disk_statistic() : rd_ios(0), wr_ios(0), rd_ticks(0), wr_ticks(0), tot_ticks(0), rq_ticks(0), in_flight(0)
+    {}
+};
+
+struct mren_iostat {
+    unsigned long svctm;
+    bool is_block_io;
+
+    mren_iostat() : svctm(0), is_block_io(0)
+    {}
+};
+
 struct mren_block_io_time_window {
-    int first_gear_start_index;
-    int second_gear_start_index;
-    int third_gear_start_index;
+    int failNum;
+    int checkNum;
+    std::queue<bool> window;
 
-    int first_gear_block_io_num;
-    int second_gear_block_io_num;
-    int third_gear_block_io_num;
-
-    int cursors;
-
-    mren_io_time window[WINDOW_LENGTH];
-
-    mren_block_io_time_window() : first_gear_start_index(0), second_gear_start_index(0), third_gear_start_index(0),
-        first_gear_block_io_num(0), second_gear_block_io_num(0), third_gear_block_io_num(0), cursors(-1)
+    mren_block_io_time_window() : failNum(0), checkNum(10)
     {
     }
 
 };
 
 static mren_block_io_time_window g_window;
+static mren_disk_statistic g_pstat;
+static mren_disk_statistic g_cstat;
 
 void alarm()
 {
 
 }
 
-void CheckIO(long long start, long long end)
+void CheckIO(bool isSucceed)
 {
-    // firt gear
-    auto ioTime  = end - start;
-    while (ioTime >= 0) {
-        g_window.cursors = (g_window.cursors + 1) % WINDOW_LENGTH;
-        g_window.window[g_window.cursors].absolutleTime = end - ioTime;
-        g_window.window[g_window.cursors].ioTime = ioTime / CHECK_TIME ? CHECK_TIME : ioTime;
-        
-        int distance = (WINDOW_LENGTH + g_window.first_gear_start_index - g_window.cursors - 1) % WINDOW_LENGTH;
-        if (distance == 0) {
-            if (g_window.window[g_window.first_gear_start_index].ioTime >= 1000) {
-                --g_window.first_gear_block_io_num;
-            }
-            g_window.first_gear_start_index = (g_window.first_gear_start_index + 1) % WINDOW_LENGTH;
-        }
-
-        if (g_window.window[g_window.cursors].ioTime >= 1000) {
-            ++g_window.first_gear_block_io_num;
-        }
-        ioTime -= CHECK_TIME;
+    if (!isSucceed) {
+        ++g_window.failNum;
     }
 
-    while (g_window.window[g_window.cursors].absolutleTime - g_window.window[g_window.first_gear_start_index].absolutleTime > 10000) {
-        if (g_window.window[g_window.first_gear_start_index].ioTime >= 1000) {
-            --g_window.first_gear_block_io_num;
+    g_window.window.push(isSucceed);
+    while (g_window.window.size() >= g_window.checkNum) {
+        if (!g_window.window.front()) {
+            --g_window.failNum;
         }
-        g_window.first_gear_start_index = (g_window.first_gear_start_index + 1) % WINDOW_LENGTH;
+        g_window.window.pop();
     }
 
-    if (g_window.first_gear_block_io_num >= 4) {
+    if (g_window.failNum >= FAULT_NUM) {
         alarm();
     }
 }
@@ -90,19 +92,21 @@ void CheckIO(long long start, long long end)
 void iotest()
 {
     static unsigned long cursors = 0;
-    static int partitionNum = 40960;
-    static char buf[512] = { 0 };
+    /*static int partitionNum = 40960;*/
+    static int partitionNum = 10;
+    static std::string buf= "123";
+    char temp[64] = { 0 };
 
-    auto begin = time_point_cast<milliseconds>(steady_clock::now()).time_since_epoch().count();
     int fd = open("/home/file", O_RDWR);
-    auto ret = lseek(fd, (cursors++) % partitionNum, SEEK_SET);
-    ret = write(fd, buf, sizeof(buf));
-    ret = read(fd, buf, sizeof(buf));
+    auto curr = (cursors++) % partitionNum * buf.length();
+    auto ret = lseek(fd, curr, SEEK_SET);
+    ret = write(fd, buf.data(), buf.length());
+    ret = lseek(fd, curr, SEEK_SET);
+    ret = read(fd, temp, buf.length());
     close(fd);
-    std::this_thread::sleep_for(std::chrono::milliseconds(3000));
-    auto end = time_point_cast<milliseconds>(steady_clock::now()).time_since_epoch().count();
+    std::cout << temp << std::endl;
 
-    CheckIO(begin, end);
+    CheckIO(false);
 }
 
 void worker()
@@ -118,8 +122,35 @@ void worker()
     }
 }
 
+bool getDiskStat(mren_disk_statistic& stat)
+{
+    std::ifstream input("/proc/diskstats");
+    if (!input) {
+        return;
+    }
+
+
+
+}
+
+void iostat()
+{
+
+}
+
+void func()
+{
+
+    while (true) {
+        std::this_thread::sleep_for(std::chrono::seconds(2));
+        iostat();
+    }
+}
+
 int main()
 {
     worker();
+    std::thread thrd(func);
+    thrd.join();
     std::cout << "Hello World!\n";
 }
