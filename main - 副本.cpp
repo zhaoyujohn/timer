@@ -7,6 +7,7 @@
 #include <string>
 #include <iostream>
 #include <fstream>
+#include <sstream>
 #include <utility>
 #include <queue>
 #include <thread>
@@ -33,7 +34,7 @@ struct mren_disk_statistic {
     unsigned long rd_ios;       // 读完成次数
     unsigned long wr_ios;      // 写完成次数
     unsigned long rd_ticks;    // 读操作花费毫秒数
-    unsigned long wr_ticks; // 写操作花费的毫秒数
+    unsigned long wr_ticks;     // 写操作花费的毫秒数
     unsigned long tot_ticks;     // IO操作花费的毫秒数
     unsigned long rq_ticks;      // IO操作花费的加权毫秒数
     unsigned long in_flight;     // 正在处理的IO请求数
@@ -94,7 +95,7 @@ void iotest()
     static unsigned long cursors = 0;
     /*static int partitionNum = 40960;*/
     static int partitionNum = 10;
-    static std::string buf= "123";
+    static std::string buf = "123";
     char temp[64] = { 0 };
 
     int fd = open("/home/file", O_RDWR);
@@ -126,21 +127,43 @@ bool getDiskStat(mren_disk_statistic& stat)
 {
     std::ifstream input("/proc/diskstats");
     if (!input) {
-        return;
+        return false;
     }
 
+    char buffer[256] = { 0 };
 
+    while (input.getline(buffer, sizeof(buffer))) {
+        std::cout << buffer << std::endl;
+    }
 
+}
+
+bool check_block_io()
+{
+    return true;
+}
+
+bool check_slow_io()
+{
+    return true;
 }
 
 void iostat()
 {
+    getDiskStat(g_cstat);
 
+    if (check_block_io()) {
+        return;
+    }
+
+    if (check_slow_io()) {
+        return;
+    }
 }
 
 void func()
 {
-
+    getDiskStat(g_pstat);
     while (true) {
         std::this_thread::sleep_for(std::chrono::seconds(2));
         iostat();
@@ -149,8 +172,8 @@ void func()
 
 int main()
 {
-    worker();
     std::thread thrd(func);
     thrd.join();
+    worker();
     std::cout << "Hello World!\n";
 }
