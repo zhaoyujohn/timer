@@ -2,16 +2,52 @@
 #include <deque>
 #include <string>
 struct mren_disk_statistic {
-    unsigned long rd_ios;       // ¶ÁÍê³É´ÎÊı
-    unsigned long wr_ios;      // Ğ´Íê³É´ÎÊı
-    unsigned long rd_ticks;    // ¶Á²Ù×÷»¨·ÑºÁÃëÊı
-    unsigned long wr_ticks;     // Ğ´²Ù×÷»¨·ÑµÄºÁÃëÊı
-    unsigned long tot_ticks;     // IO²Ù×÷»¨·ÑµÄºÁÃëÊı
-    unsigned long rq_ticks;      // IO²Ù×÷»¨·ÑµÄ¼ÓÈ¨ºÁÃëÊı
-    unsigned long in_flight;     // ÕıÔÚ´¦ÀíµÄIOÇëÇóÊı
+    unsigned long rd_ios;       // è¯»å®Œæˆæ¬¡æ•°
+    unsigned long wr_ios;      // å†™å®Œæˆæ¬¡æ•°
+    unsigned long rd_ticks;    // è¯»æ“ä½œèŠ±è´¹æ¯«ç§’æ•°
+    unsigned long wr_ticks;     // å†™æ“ä½œèŠ±è´¹çš„æ¯«ç§’æ•°
+    unsigned long tot_ticks;     // IOæ“ä½œèŠ±è´¹çš„æ¯«ç§’æ•°
+    unsigned long rq_ticks;      // IOæ“ä½œèŠ±è´¹çš„åŠ æƒæ¯«ç§’æ•°
+    unsigned long in_flight;     // æ­£åœ¨å¤„ç†çš„IOè¯·æ±‚æ•°
 
     mren_disk_statistic() : rd_ios(0), wr_ios(0), rd_ticks(0), wr_ticks(0), tot_ticks(0), rq_ticks(0), in_flight(0)
     {}
+};
+
+template<typename T >
+class mren_fault_detection_sliding_windows {
+public:
+    mren_fault_detection_sliding_windows(int check_thresold, int fault_thresold, std::function<bool(T&)>&& func) 
+        : check_thresold_(check_thresold), fault_thresold_(fault_thresold), check_func_(func)
+    {}
+    ~mren_fault_detection_sliding_windows()
+    {}
+public:
+    bool check_if_reach_fault_thresold(T& value)
+    {
+        if (!check_func_(value)) {
+            ++fault_num_;
+        }
+
+        sliding_window_.push(value);
+        while (sliding_window_.size() > check_thresold_) {
+            if (!check_func_(sliding_window_.front())) {
+                --fault_num_;
+            }
+            sliding_window_.pop();
+        }
+
+        if (fault_num_ >= fault_thresold_) {
+            return true;
+        }
+        return false;
+    }
+private:
+    std::queue<T> sliding_window_;
+    int check_thresold_;
+    int fault_thresold_;
+    int fault_num_ = 0;
+    std::function<bool(T&)> check_func_;
 };
 
 class mren_disk_io_block_detect
